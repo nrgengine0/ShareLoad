@@ -2,29 +2,63 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OBS Camera Overlay (Firebase)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Camera - Firebase Advanced Controller</title>
     <style>
-        body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
-        .camera-container {
-            position: absolute;
-            top: 30px; left: 30px;
-            width: 400px; 
-            aspect-ratio: 16/9;
-            border: 4px solid #00ffcc;
-            border-radius: 12px;
-            box-shadow: 0 0 15px #00ffcc, inset 0 0 10px #00ffcc;
-            overflow: hidden;
-            background: #000;
-            transition: top 0.05s ease-out, left 0.05s ease-out, width 0.05s ease-out;
-        }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; }
+        body { margin: 0; padding: 20px; background: #121212; color: #fff; font-family: sans-serif; text-align: center; }
+        .btn { padding: 15px 30px; font-size: 16px; font-weight: bold; background: #00ffcc; border: none; border-radius: 8px; cursor: pointer; color: #000; box-shadow: 0 4px 15px rgba(0,255,204,0.3); margin: 5px; }
+        #status { margin-top: 15px; color: #ffaa00; font-size: 15px; }
+        
+        /* 👥 OBS List Area */
+        .list-box { background: #1e1e1e; padding: 15px; border-radius: 12px; max-width: 400px; margin: 20px auto; border: 1px solid #333; text-align: left; }
+        .list-title { font-weight: bold; color: #00ffcc; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .obs-item { display: flex; justify-content: space-between; align-items: center; background: #2a2a2a; padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #444; }
+        .obs-id { font-family: monospace; font-size: 14px; color: #fff; }
+        .btn-kick { background: #ff3333; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        .btn-kick:hover { background: #cc0000; }
+        
+        /* 🎛️ Layout Slider Styling */
+        .control-box { background: #1e1e1e; padding: 20px; border-radius: 12px; max-width: 400px; margin: 20px auto; text-align: left; border: 1px solid #333; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 5px; color: #00ffcc; font-weight: bold; }
+        .control-group input { width: 100%; accent-color: #00ffcc; }
+        video { width: 100%; max-width: 400px; border-radius: 12px; margin-top: 20px; transform: scaleX(-1); border: 3px solid #333; }
     </style>
-    
+</head>
+<body>
+
+    <h1>📱 PHONE STREAM & MULTI-CONTROLLER</h1>
+    <div><button class="btn" id="startBtn">ကင်မရာ စဖွင့်မည်</button></div>
+    <div id="status">ခလုတ်ကို နှိပ်ပါ...</div>
+
+    <!-- 👥 OBS List -->
+    <div class="list-box">
+        <div class="list-title">👥 ချိတ်ဆက်ထားသော OBS များ (<span id="totalConnections">0</span>)</div>
+        <div id="obsList"><div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div></div>
+    </div>
+
+    <!-- 🎛️ Layout Sliders -->
+    <div class="control-box">
+        <div class="control-group">
+            <label>အပေါ် / အောက် (Top Position)</label>
+            <input type="range" id="topSlider" min="0" max="900" value="30">
+        </div>
+        <div class="control-group">
+            <label>ဘယ် / ညာ (Left Position)</label>
+            <input type="range" id="leftSlider" min="0" max="1600" value="30">
+        </div>
+        <div class="control-group">
+            <label>အရွယ်အစား (Camera Size/Width)</label>
+            <input type="range" id="sizeSlider" min="150" max="1000" value="400">
+        </div>
+    </div>
+
+    <video id="localVideo" autoplay playsinline muted></video>
+
     <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, onDisconnect, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
@@ -39,77 +73,117 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-        const container = document.querySelector('.camera-container');
-        
-        const myConnectionId = Math.random().toString(36).substr(2, 9);
-        const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
+        const layoutRef = ref(db, 'stream/layout');
+        const connectionsRef = ref(db, 'stream/connections');
 
-        // ၁။ Database ထဲတွင် အသင့်စောင့်နေကြောင်း အသိပေးသည်
-        set(myStatusRef, "waiting");
-        onDisconnect(myStatusRef).remove();
-        onDisconnect(ref(db, `stream/signals/${myConnectionId}`)).remove();
-
-        // ကန်ထုတ်ခံရပါက ပိတ်ပစ်မည်
-        onValue(myStatusRef, (snapshot) => {
-            if (!snapshot.exists()) {
-                document.getElementById('remoteVideo').srcObject = null;
-                document.getElementById('status').innerText = "❌ DISCONNECTED (KICKED BY PHONE)";
-                if(peerConnection) peerConnection.close();
-            }
-        });
-
-        // Layout Sliders နားထောင်ခြင်း
-        onValue(ref(db, 'stream/layout'), (snapshot) => {
-            const layout = snapshot.val();
-            if (layout && container) {
-                container.style.top = layout.top;
-                container.style.left = layout.left;
-                container.style.width = layout.width;
-            }
-        });
-
+        let localStream;
+        let peerConnections = {}; // OBS ID အလိုက် WebRTC Connection များကို အသီးသီးသိမ်းမည်
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-        let peerConnection = new RTCPeerConnection(configuration);
 
-        peerConnection.onicecandidate = event => {
-            if (event.candidate) {
-                set(ref(db, `stream/signals/${myConnectionId}/candidate`), JSON.stringify(event.candidate));
-            }
-        };
-
-        peerConnection.ontrack = event => {
-            document.getElementById('remoteVideo').srcObject = event.streams[0];
-            document.getElementById('status').innerText = "🟢 CONNECTED";
-        };
-
-        // မိမိ ID နဲ့ သက်ဆိုင်တဲ့ နေရာက Offer ဒေတာကိုပဲ သီးသန့်ဖတ်ယူခြင်း
-        onValue(ref(db, `stream/signals/${myConnectionId}/offer`), async (snapshot) => {
+        // --- OBS ဝင်လာမှုနှင့် WebRTC Signal အပြန်အလှန်လုပ်ဆောင်ခြင်း ---
+        onValue(connectionsRef, (snapshot) => {
             const data = snapshot.val();
-            if (data && peerConnection.signalingState !== "closed") {
-                const offer = JSON.parse(data);
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const obsListDiv = document.getElementById('obsList');
+            const totalCountSpan = document.getElementById('totalConnections');
+            obsListDiv.innerHTML = "";
+            
+            if (data) {
+                const keys = Object.keys(data);
+                totalCountSpan.innerText = keys.length;
                 
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                
-                await set(ref(db, `stream/signals/${myConnectionId}/answer`), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+                keys.forEach((id, index) => {
+                    const item = document.createElement('div');
+                    item.className = "obs-item";
+                    item.innerHTML = `
+                        <span class="obs-id">🖥️ OBS Screen #${index + 1} (${id})</span>
+                        <button class="btn-kick" data-id="${id}">ဖြတ်မည် (Kick)</button>
+                    `;
+                    obsListDiv.appendChild(item);
+
+                    // OBS အသစ်ဝင်လာပြီး ဖုန်းဘက်မှာ ကင်မရာပွင့်နေလျှင် WebRTC ချိတ်ဆက်မှု စတင်မည်
+                    if (localStream && !peerConnections[id] && data[id] === "waiting") {
+                        setupPeerConnection(id);
+                    }
+                });
+
+                document.querySelectorAll('.btn-kick').forEach(button => {
+                    button.addEventListener('click', function() {
+                        kickOBS(this.getAttribute('data-id'));
+                    });
+                });
+            } else {
+                totalCountSpan.innerText = "0";
+                obsListDiv.innerHTML = `<div style="color:#777; text-align:center; font-size:14px;">ချိတ်ဆက်မှု မရှိသေးပါ</div>`;
             }
         });
 
-        onValue(ref(db, `stream/signals/${myConnectionId}/candidate`), async (snapshot) => {
-            const data = snapshot.val();
-            if (data && peerConnection && peerConnection.signalingState !== "closed") {
-                try {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data)));
-                } catch(e) {}
+        // --- OBS တစ်ခုချင်းစီအတွက် WebRTC သီးသန့်ဆောက်ပေးခြင်း (အဓိက အပိုင်း) ---
+        async function setupPeerConnection(id) {
+            const pc = new RTCPeerConnection(configuration);
+            peerConnections[id] = pc;
+
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.onicecandidate = event => {
+                if (event.candidate) {
+                    set(ref(db, `stream/signals/${id}/candidate`), JSON.stringify(event.candidate));
+                }
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            // သီးသန့် ID လမ်းကြောင်းအောက်မှာ Offer သွားတင်ပေးသည်
+            await set(ref(db, `stream/signals/${id}/offer`), JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+            await set(ref(db, `stream/connections/${id}`), "offered");
+
+            // အဆိုပါ OBS ဘက်က အကြောင်းပြန်မည့် Answer ကို စောင့်နားထောင်ခြင်း
+            onValue(ref(db, `stream/signals/${id}/answer`), async (snapshot) => {
+                const answerData = snapshot.val();
+                if (answerData && pc.signalingState !== "stable") {
+                    await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(answerData)));
+                    sendLayoutUpdate();
+                }
+            });
+        }
+
+        async function kickOBS(id) {
+            if (peerConnections[id]) {
+                peerConnections[id].close();
+                delete peerConnections[id];
             }
-        });
+            await remove(ref(db, `stream/connections/${id}`));
+            await remove(ref(db, `stream/signals/${id}`));
+        }
+
+        function sendLayoutUpdate() {
+            set(layoutRef, {
+                top: document.getElementById('topSlider').value + "px",
+                left: document.getElementById('leftSlider').value + "px",
+                width: document.getElementById('sizeSlider').value + "px"
+            });
+        }
+
+        document.getElementById('topSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('leftSlider').addEventListener('input', sendLayoutUpdate);
+        document.getElementById('sizeSlider').addEventListener('input', sendLayoutUpdate);
+
+        window.startCamera = async function() {
+            document.getElementById('status').innerText = "ကင်မရာ ဖွင့်နေပါသည်...";
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: 1280, height: 720 }, 
+                    audio: false 
+                });
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('status').innerText = "🟢 ကင်မရာ အသင့်ဖြစ်ပါပြီ။ OBS ဘက်က လင့်ခ်ကို ဖွင့်ပါ သို့မဟုတ် Refresh နှိပ်ပါ။";
+                
+                onDisconnect(ref(db, 'stream')).remove();
+            } catch (err) {
+                document.getElementById('status').innerText = "Error: " + err.message;
+            }
+        }
+        document.getElementById('startBtn').addEventListener('click', startCamera);
     </script>
-</head>
-<body>
-    <div id="status">🔴 WAITING FOR PHONE...</div>
-    <div class="camera-container">
-        <video id="remoteVideo" autoplay playsinline></video>
-    </div>
 </body>
 </html>

@@ -39,28 +39,26 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
-
         const container = document.querySelector('.camera-container');
         
-        // 🆔 လက်ရှိ OBS အတွက် သီးသန့် ID တစ်ခုထုတ်ပြီး Register လုပ်သည်
         const myConnectionId = Math.random().toString(36).substr(2, 9);
         const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
 
-        set(myStatusRef, true);
+        // ၁။ Database ထဲတွင် အသင့်စောင့်နေကြောင်း အသိပေးသည်
+        set(myStatusRef, "waiting");
         onDisconnect(myStatusRef).remove();
+        onDisconnect(ref(db, `stream/signals/${myConnectionId}`)).remove();
 
-        // 🛑 မိမိရဲ့ ID ကို ဖုန်းဘက်က ဖျက်လိုက်/Kick လိုက်လား စောင့်ကြည့်ခြင်း
+        // ကန်ထုတ်ခံရပါက ပိတ်ပစ်မည်
         onValue(myStatusRef, (snapshot) => {
             if (!snapshot.exists()) {
-                // အကယ်၍ အထုတ်ခံရပါက ဗီဒီယိုလိုင်းပိတ်ပြီး မူလအခြေအနေသို့ ပြန်သွားမည်
                 document.getElementById('remoteVideo').srcObject = null;
                 document.getElementById('status').innerText = "❌ DISCONNECTED (KICKED BY PHONE)";
-                if(peerConnection) {
-                    peerConnection.close();
-                }
+                if(peerConnection) peerConnection.close();
             }
         });
 
+        // Layout Sliders နားထောင်ခြင်း
         onValue(ref(db, 'stream/layout'), (snapshot) => {
             const layout = snapshot.val();
             if (layout && container) {
@@ -75,7 +73,7 @@
 
         peerConnection.onicecandidate = event => {
             if (event.candidate) {
-                set(ref(db, 'stream/candidate'), JSON.stringify(event.candidate));
+                set(ref(db, `stream/signals/${myConnectionId}/candidate`), JSON.stringify(event.candidate));
             }
         };
 
@@ -84,9 +82,9 @@
             document.getElementById('status').innerText = "🟢 CONNECTED";
         };
 
-        onValue(ref(db, 'stream/signal'), async (snapshot) => {
+        // မိမိ ID နဲ့ သက်ဆိုင်တဲ့ နေရာက Offer ဒေတာကိုပဲ သီးသန့်ဖတ်ယူခြင်း
+        onValue(ref(db, `stream/signals/${myConnectionId}/offer`), async (snapshot) => {
             const data = snapshot.val();
-            // မိမိ ID သည် အွန်လိုင်းရှိနေဆဲဖြစ်မှသာ ချိတ်ဆက်မှု လက်ခံမည်
             if (data && peerConnection.signalingState !== "closed") {
                 const offer = JSON.parse(data);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
@@ -94,16 +92,15 @@
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
-                await set(ref(db, 'stream/answer'), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+                await set(ref(db, `stream/signals/${myConnectionId}/answer`), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
             }
         });
 
-        onValue(ref(db, 'stream/candidate'), async (snapshot) => {
+        onValue(ref(db, `stream/signals/${myConnectionId}/candidate`), async (snapshot) => {
             const data = snapshot.val();
             if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 try {
-                    const candidate = JSON.parse(data);
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(data)));
                 } catch(e) {}
             }
         });

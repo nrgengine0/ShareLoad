@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OBS Camera Overlay (iOS Background Stable)</title>
+    <title>OBS Camera Overlay (Kick Control Only)</title>
     <style>
         body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
         .camera-container {
@@ -21,10 +21,9 @@
         #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 2px #000; }
     </style>
     
-    <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
@@ -45,15 +44,10 @@
         const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
 
         let peerConnection;
-        const configuration = { 
-            iceServers: [], 
-            iceTransportPolicy: "all" 
-        };
+        const configuration = { iceServers: [], iceTransportPolicy: "all" };
 
         function initConnection() {
             set(myStatusRef, "waiting");
-            onDisconnect(myStatusRef).remove();
-            onDisconnect(ref(db, `stream/signals/${myConnectionId}`)).remove();
 
             if(peerConnection) {
                 try { peerConnection.close(); } catch(e) {}
@@ -73,25 +67,23 @@
                 document.getElementById('status').innerText = "🟢 LOCAL LIVE CONNECTED";
             };
 
-            // 🔄 iOS Background ရောက်သွားလို့ လိုင်းထစ်ရင် သို့မဟုတ် ပြတ်သွားရင် Auto ပြန်ချိတ်မည့် စနစ်
             peerConnection.oniceconnectionstatechange = () => {
                 const state = peerConnection.iceConnectionState;
+                // ဖုန်းဘက်က အပြင်ထွက်လို့ ခဏပြတ်သွားရင် အခန်းကိုဖျက်မချဘဲ ပြန်ချိတ်ဖို့ စောင့်နေမည်
                 if (state === "disconnected" || state === "failed") {
-                    document.getElementById('status').innerText = "⚠️ RECONNECTING TO IOS...";
-                    setTimeout(() => {
-                        set(myStatusRef, "waiting"); // Firebase ကို တောင်းဆိုချက်အသစ် ပြန်ပို့ခိုင်းခြင်း
-                    }, 1000);
+                    document.getElementById('status').innerText = "⏳ WAITING FOR PHONE TO RECONNECT...";
                 }
             };
         }
 
         initConnection();
 
+        // Kick ခလုတ်နှိပ်မှသာ အစကနေ ပြန် Connection ရှာမည်
         onValue(myStatusRef, (snapshot) => {
             if (!snapshot.exists()) {
                 document.getElementById('remoteVideo').srcObject = null;
-                document.getElementById('status').innerText = "❌ DISCONNECTED";
-                initConnection(); // Connection ကို အစကနေ ပြန်ဖွင့်ပြီး အသင့်စောင့်ခိုင်းခြင်း
+                document.getElementById('status').innerText = "❌ KICKED / DISCONNECTED";
+                initConnection(); 
             }
         });
 
@@ -109,10 +101,8 @@
             if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 const offer = JSON.parse(data);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
-                
                 await set(ref(db, `stream/signals/${myConnectionId}/answer`), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
             }
         });
@@ -133,7 +123,6 @@
 <body>
     <div id="status">🔴 WAITING FOR LOCAL PHONE...</div>
     <div class="camera-container">
-        <!-- iOS Auto-Play Stability Fix Attributes -->
         <video id="remoteVideo" autoplay playsinline muted></video>
     </div>
 </body>

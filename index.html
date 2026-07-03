@@ -15,7 +15,7 @@
             box-shadow: 0 0 15px #00ffcc, inset 0 0 10px #00ffcc;
             overflow: hidden;
             background: #000;
-            transition: top 0.05s ease-out, left 0.05s ease-out, width 0.05s ease-out; /* တုံ့ပြန်မှု မြန်ဆန် ချောမွေ့စေရန် */
+            transition: top 0.05s ease-out, left 0.05s ease-out, width 0.05s ease-out;
         }
         video { width: 100%; height: 100%; object-fit: cover; }
         #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; }
@@ -24,7 +24,7 @@
     <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
@@ -41,8 +41,26 @@
         const db = getDatabase(app);
 
         const container = document.querySelector('.camera-container');
+        
+        // 🆔 လက်ရှိ OBS အတွက် သီးသန့် ID တစ်ခုထုတ်ပြီး Register လုပ်သည်
+        const myConnectionId = Math.random().toString(36).substr(2, 9);
+        const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
 
-        // --- 🎛️ ဖုန်းမှ ပို့လိုက်သော Layout များကို Real-time ဖတ်ပြီး CSS ပြောင်းလဲခြင်း ---
+        set(myStatusRef, true);
+        onDisconnect(myStatusRef).remove();
+
+        // 🛑 မိမိရဲ့ ID ကို ဖုန်းဘက်က ဖျက်လိုက်/Kick လိုက်လား စောင့်ကြည့်ခြင်း
+        onValue(myStatusRef, (snapshot) => {
+            if (!snapshot.exists()) {
+                // အကယ်၍ အထုတ်ခံရပါက ဗီဒီယိုလိုင်းပိတ်ပြီး မူလအခြေအနေသို့ ပြန်သွားမည်
+                document.getElementById('remoteVideo').srcObject = null;
+                document.getElementById('status').innerText = "❌ DISCONNECTED (KICKED BY PHONE)";
+                if(peerConnection) {
+                    peerConnection.close();
+                }
+            }
+        });
+
         onValue(ref(db, 'stream/layout'), (snapshot) => {
             const layout = snapshot.val();
             if (layout && container) {
@@ -53,7 +71,7 @@
         });
 
         const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-        const peerConnection = new RTCPeerConnection(configuration);
+        let peerConnection = new RTCPeerConnection(configuration);
 
         peerConnection.onicecandidate = event => {
             if (event.candidate) {
@@ -66,10 +84,10 @@
             document.getElementById('status').innerText = "🟢 CONNECTED";
         };
 
-        // အစောပိုင်းက အလုပ်လုပ်ခဲ့သည့် 'stream/signal' လမ်းကြောင်းအတိုင်း ပြန်လည်ပြင်ဆင်ထားပါသည်
         onValue(ref(db, 'stream/signal'), async (snapshot) => {
             const data = snapshot.val();
-            if (data) {
+            // မိမိ ID သည် အွန်လိုင်းရှိနေဆဲဖြစ်မှသာ ချိတ်ဆက်မှု လက်ခံမည်
+            if (data && peerConnection.signalingState !== "closed") {
                 const offer = JSON.parse(data);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                 
@@ -82,7 +100,7 @@
 
         onValue(ref(db, 'stream/candidate'), async (snapshot) => {
             const data = snapshot.val();
-            if (data) {
+            if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 try {
                     const candidate = JSON.parse(data);
                     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));

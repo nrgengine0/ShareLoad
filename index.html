@@ -2,26 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OBS Camera Overlay (Firebase)</title>
+    <title>OBS Camera Overlay (iOS Background Stable)</title>
     <style>
         body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
         .camera-container {
             position: absolute;
             top: 30px; left: 30px;
-            width: 400px; height: 225px;
+            width: 400px; 
+            aspect-ratio: 16/9;
             border: 4px solid #00ffcc;
             border-radius: 12px;
             box-shadow: 0 0 15px #00ffcc, inset 0 0 10px #00ffcc;
             overflow: hidden;
             background: #000;
+            transition: top 0.05s ease-out, left 0.05s ease-out, width 0.05s ease-out;
         }
         video { width: 100%; height: 100%; object-fit: cover; }
-        #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; }
+        #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 2px #000; }
     </style>
     
+    <!-- Firebase SDK Modules -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue, child, onChildAdded } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
@@ -36,64 +39,102 @@
 
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
+        const container = document.querySelector('.camera-container');
+        
+        const myConnectionId = Math.random().toString(36).substr(2, 9);
+        const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
 
+        let peerConnection;
         const configuration = { 
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun.services.mozilla.com' }
-            ] 
+            iceServers: [], 
+            iceTransportPolicy: "all" 
         };
 
-        const peerConnection = new RTCPeerConnection(configuration);
+        function initConnection() {
+            set(myStatusRef, "waiting");
+            onDisconnect(myStatusRef).remove();
+            onDisconnect(ref(db, `stream/signals/${myConnectionId}`)).remove();
 
-        peerConnection.onicecandidate = event => {
-            if (event.candidate) {
-                const candidateRef = ref(db, `stream/candidates/${Math.random().toString(36).substr(2, 9)}`);
-                set(candidateRef, JSON.stringify(event.candidate));
+            if(peerConnection) {
+                try { peerConnection.close(); } catch(e) {}
             }
-        };
 
-        // ဖုန်းဘက်မှ ဗီဒီယိုလမ်းကြောင်း ရောက်လာလျှင် ဗီဒီယို Tags ထဲ ထည့်ပြရန်
-        peerConnection.ontrack = event => {
-            const remoteVideo = document.getElementById('remoteVideo');
-            if (remoteVideo.srcObject !== event.streams[0]) {
-                remoteVideo.srcObject = event.streams[0];
-                document.getElementById('status').innerText = "🟢 CONNECTED";
+            peerConnection = new RTCPeerConnection(configuration);
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate && event.candidate.candidate.includes("host")) {
+                    set(ref(db, `stream/signals/${myConnectionId}/candidate`), JSON.stringify(event.candidate));
+                }
+            };
+
+            peerConnection.ontrack = event => {
+                const videoEl = document.getElementById('remoteVideo');
+                videoEl.srcObject = event.streams[0];
+                document.getElementById('status').innerText = "🟢 LOCAL LIVE CONNECTED";
+            };
+
+            // 🔄 iOS Background ရောက်သွားလို့ လိုင်းထစ်ရင် သို့မဟုတ် ပြတ်သွားရင် Auto ပြန်ချိတ်မည့် စနစ်
+            peerConnection.oniceconnectionstatechange = () => {
+                const state = peerConnection.iceConnectionState;
+                if (state === "disconnected" || state === "failed") {
+                    document.getElementById('status').innerText = "⚠️ RECONNECTING TO IOS...";
+                    setTimeout(() => {
+                        set(myStatusRef, "waiting"); // Firebase ကို တောင်းဆိုချက်အသစ် ပြန်ပို့ခိုင်းခြင်း
+                    }, 1000);
+                }
+            };
+        }
+
+        initConnection();
+
+        onValue(myStatusRef, (snapshot) => {
+            if (!snapshot.exists()) {
+                document.getElementById('remoteVideo').srcObject = null;
+                document.getElementById('status').innerText = "❌ DISCONNECTED";
+                initConnection(); // Connection ကို အစကနေ ပြန်ဖွင့်ပြီး အသင့်စောင့်ခိုင်းခြင်း
             }
-        };
+        });
 
-        // ဖုန်းဆီမှ Offer လာမည့်အလှည့်ကို စောင့်ကြည့်ခြင်း
-        onValue(ref(db, 'stream/offer'), async (snapshot) => {
+        onValue(ref(db, 'stream/layout'), (snapshot) => {
+            const layout = snapshot.val();
+            if (layout && container) {
+                container.style.top = layout.top;
+                container.style.left = layout.left;
+                container.style.width = layout.width;
+            }
+        });
+
+        onValue(ref(db, `stream/signals/${myConnectionId}/offer`), async (snapshot) => {
             const data = snapshot.val();
-            if (data && peerConnection.signalingState === "stable") {
+            if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 const offer = JSON.parse(data);
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                 
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
-                await set(ref(db, 'stream/answer'), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+                await set(ref(db, `stream/signals/${myConnectionId}/answer`), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
             }
         });
 
-        // ဝင်လာသမျှ လမ်းကြောင်းတည်ဆောက်မှု (ICE Candidates) အားလုံးကို အချိန်နဲ့တပြေးညီ ချိတ်ဆက်ခြင်း
-        onChildAdded(ref(db, 'stream/candidates'), async (snapshot) => {
+        onValue(ref(db, `stream/signals/${myConnectionId}/candidate`), async (snapshot) => {
             const data = snapshot.val();
-            if (data) {
+            if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 try {
-                    const candidate = JSON.parse(data);
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                } catch(e) { console.error("Candidate Error", e); }
+                    const parsed = JSON.parse(data);
+                    if (parsed.candidate.includes("host")) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(parsed));
+                    }
+                } catch(e) {}
             }
         });
     </script>
 </head>
 <body>
-    <div id="status">🔴 WAITING FOR PHONE...</div>
+    <div id="status">🔴 WAITING FOR LOCAL PHONE...</div>
     <div class="camera-container">
-        <video id="remoteVideo" autoplay playsinline></video>
+        <!-- iOS Auto-Play Stability Fix Attributes -->
+        <video id="remoteVideo" autoplay playsinline muted></video>
     </div>
 </body>
 </html>

@@ -21,7 +21,7 @@
             width: 100%; 
             height: 100%; 
             display: block; 
-            object-fit: cover; /* 1:1, 16:9, 9:16 အားလုံးတွင် ဘေးလွတ်မကျန်စေရန် Cover သုံးသည် */
+            object-fit: cover; 
         }
         #status { position: absolute; top: 10px; left: 40px; color: #00ffcc; font-family: sans-serif; font-size: 12px; font-weight: bold; text-shadow: 1px 1px 2px #000; }
     </style>
@@ -49,7 +49,8 @@
         const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
 
         let peerConnection;
-        const configuration = { iceServers: [], iceTransportPolicy: "all" };
+        // StreamChamp အတွက် ICE Servers Configuration ကို ပိုမိုခိုင်မာအောင် ထားပေးခြင်း
+        const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }], iceTransportPolicy: "all" };
 
         function initConnection() {
             set(myStatusRef, "waiting");
@@ -61,7 +62,7 @@
             peerConnection = new RTCPeerConnection(configuration);
 
             peerConnection.onicecandidate = event => {
-                if (event.candidate && event.candidate.candidate.includes("host")) {
+                if (event.candidate) {
                     set(ref(db, `stream/signals/${myConnectionId}/candidate`), JSON.stringify(event.candidate));
                 }
             };
@@ -69,7 +70,14 @@
             peerConnection.ontrack = event => {
                 const videoEl = document.getElementById('remoteVideo');
                 videoEl.srcObject = event.streams[0];
-                document.getElementById('status').innerText = "";
+                document.getElementById('status').innerText = "🟢 LOCAL LIVE CONNECTED";
+                
+                // StreamChamp အတွက် အတင်းဆွဲဖွင့်ပေးမည့် Autoplay Force Trigger
+                videoEl.play().catch(error => {
+                    console.log("Autoplay prevented, trying to force play.");
+                    videoEl.muted = true;
+                    videoEl.play();
+                });
             };
 
             peerConnection.oniceconnectionstatechange = () => {
@@ -90,7 +98,6 @@
             }
         });
 
-        // 🔄 ဖုန်းဘက်မှ ပို့လိုက်သော Layout နှင့် Aspect Ratio အချိုးအစားကို ဖတ်၍ Sync လုပ်ပေးခြင်း
         onValue(ref(db, 'stream/layout'), (snapshot) => {
             const layout = snapshot.val();
             if (layout && container) {
@@ -98,7 +105,6 @@
                 container.style.left = layout.left;
                 container.style.width = layout.width;
                 
-                // Aspect Ratio ရွေးချယ်မှုအလိုက် CSS ကို ချက်ချင်းပြောင်းလဲပေးခြင်း
                 if (layout.ratio === "1:1") {
                     container.style.aspectRatio = "1/1";
                 } else if (layout.ratio === "16:9") {
@@ -106,7 +112,7 @@
                 } else if (layout.ratio === "9:16") {
                     container.style.aspectRatio = "9/16";
                 } else {
-                    container.style.aspectRatio = "1/1"; // Default Back
+                    container.style.aspectRatio = "1/1"; 
                 }
             }
         });
@@ -127,9 +133,7 @@
             if (data && peerConnection && peerConnection.signalingState !== "closed") {
                 try {
                     const parsed = JSON.parse(data);
-                    if (parsed.candidate.includes("host")) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(parsed));
-                    }
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(parsed));
                 } catch(e) {}
             }
         });
@@ -138,7 +142,8 @@
 <body>
     <div id="status">🔴 WAITING FOR LOCAL PHONE...</div>
     <div class="camera-container">
-        <video id="remoteVideo" autoplay playsinline muted></video>
+        <!-- StreamChamp HTML View အတွက် လိုအပ်သော iOS Attributes များ အပြည့်အစုံထည့်ထားသည် -->
+        <video id="remoteVideo" autoplay playsinline webkit-playsinline muted controlslist="nodownload"></video>
     </div>
 </body>
 </html>

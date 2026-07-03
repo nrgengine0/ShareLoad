@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>OBS Camera Overlay (Auto Ratio Sync)</title>
+    <title>OBS Camera Overlay (StreamChamp Secure Mode)</title>
     <style>
         body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
         .camera-container {
@@ -14,10 +14,11 @@
             border-radius: 12px;
             box-shadow: 0 0 15px #00ffcc, inset 0 0 10px #00ffcc;
             overflow: hidden;
-            background: transparent;
+            background: #000;
             transition: top 0.05s ease-out, left 0.05s ease-out, width 0.05s ease-out;
         }
-        video { 
+        /* Video tag အစား Img ကို ပြောင်းသုံးပြီး ကွက်တိဖြစ်အောင် ညှိခြင်း */
+        img { 
             width: 100%; 
             height: 100%; 
             display: block; 
@@ -28,7 +29,7 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAtkK8QrsdAlT87VDZN4TNILGGYWyI5T6o",
@@ -44,60 +45,19 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         const container = document.querySelector('.camera-container');
-        
-        const myConnectionId = Math.random().toString(36).substr(2, 9);
-        const myStatusRef = ref(db, `stream/connections/${myConnectionId}`);
+        const remoteImg = document.getElementById('remoteImg');
 
-        let peerConnection;
-        // StreamChamp အတွက် ICE Servers Configuration ကို ပိုမိုခိုင်မာအောင် ထားပေးခြင်း
-        const configuration = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }], iceTransportPolicy: "all" };
+        document.getElementById('status').innerText = "🟢 STREAMCHAMP SECURE MODE ACTIVE";
 
-        function initConnection() {
-            set(myStatusRef, "waiting");
-
-            if(peerConnection) {
-                try { peerConnection.close(); } catch(e) {}
-            }
-
-            peerConnection = new RTCPeerConnection(configuration);
-
-            peerConnection.onicecandidate = event => {
-                if (event.candidate) {
-                    set(ref(db, `stream/signals/${myConnectionId}/candidate`), JSON.stringify(event.candidate));
-                }
-            };
-
-            peerConnection.ontrack = event => {
-                const videoEl = document.getElementById('remoteVideo');
-                videoEl.srcObject = event.streams[0];
-                document.getElementById('status').innerText = "🟢 LOCAL LIVE CONNECTED";
-                
-                // StreamChamp အတွက် အတင်းဆွဲဖွင့်ပေးမည့် Autoplay Force Trigger
-                videoEl.play().catch(error => {
-                    console.log("Autoplay prevented, trying to force play.");
-                    videoEl.muted = true;
-                    videoEl.play();
-                });
-            };
-
-            peerConnection.oniceconnectionstatechange = () => {
-                const state = peerConnection.iceConnectionState;
-                if (state === "disconnected" || state === "failed") {
-                    document.getElementById('status').innerText = "⏳ WAITING FOR PHONE TO RECONNECT...";
-                }
-            };
-        }
-
-        initConnection();
-
-        onValue(myStatusRef, (snapshot) => {
-            if (!snapshot.exists()) {
-                document.getElementById('remoteVideo').srcObject = null;
-                document.getElementById('status').innerText = "❌ KICKED / DISCONNECTED";
-                initConnection(); 
+        // Firebase ထဲက ပုံရိပ် Data ကို တိုက်ရိုက်ဖတ်ပြီး img src ထဲ ထည့်ပေးခြင်း
+        onValue(ref(db, 'stream/imageFrame'), (snapshot) => {
+            const base64Data = snapshot.val();
+            if (base64Data) {
+                remoteImg.src = base64Data;
             }
         });
 
+        // Layout နှင့် Aspect Ratio ကို လိုက်ညှိပေးခြင်း
         onValue(ref(db, 'stream/layout'), (snapshot) => {
             const layout = snapshot.val();
             if (layout && container) {
@@ -116,34 +76,13 @@
                 }
             }
         });
-
-        onValue(ref(db, `stream/signals/${myConnectionId}/offer`), async (snapshot) => {
-            const data = snapshot.val();
-            if (data && peerConnection && peerConnection.signalingState !== "closed") {
-                const offer = JSON.parse(data);
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                await set(ref(db, `stream/signals/${myConnectionId}/answer`), JSON.stringify({ type: 'answer', sdp: answer.sdp }));
-            }
-        });
-
-        onValue(ref(db, `stream/signals/${myConnectionId}/candidate`), async (snapshot) => {
-            const data = snapshot.val();
-            if (data && peerConnection && peerConnection.signalingState !== "closed") {
-                try {
-                    const parsed = JSON.parse(data);
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(parsed));
-                } catch(e) {}
-            }
-        });
     </script>
 </head>
 <body>
-    <div id="status">🔴 WAITING FOR LOCAL PHONE...</div>
+    <div id="status">🔴 WAITING FOR PHONE FRAME...</div>
     <div class="camera-container">
-        <!-- StreamChamp HTML View အတွက် လိုအပ်သော iOS Attributes များ အပြည့်အစုံထည့်ထားသည် -->
-        <video id="remoteVideo" autoplay playsinline webkit-playsinline muted controlslist="nodownload"></video>
+        <!-- Browser Policy များကို ကျော်လွှားရန် <img> Tag ကို အသုံးပြုထားသည် -->
+        <img id="remoteImg" src="" alt="Stream View">
     </div>
 </body>
 </html>
